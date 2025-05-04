@@ -1,0 +1,181 @@
+"""Adapt for NetBox device view structure."""
+
+
+
+
+{% comment %}
+This template needs to be adapted to fit *within* the NetBox Device detail view structure,
+likely replacing or supplementing a block defined in NetBox's core dcim/device.html template,
+or rendered via a PluginTemplateExtension into a specific area.
+
+Assuming this is rendered as the *main content* for a custom tab via PluginTemplateExtension.
+It should inherit from NetBox's base template, not dcim/device.html directly.
+{% endcomment %}
+
+{% extends 'base/base.html' %} {# Inherit from NetBox base #}
+{% load helpers %}
+{% load render_table from netbox_tables %} {# NetBox table rendering tag #}
+{% load static %}
+{% load plugins %} {# Load plugin template tags #}
+{% load json_helpers %} {# Load custom json helper tag #}
+
+
+{% block title %} {{ object }} - Config Compliance {% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+         {# Navigation/Filtering Buttons #}
+        <div class="noprint">
+            <div class="btn-group" role="group">
+                 <a href="{% url 'plugins:netbox_golden_config:configcompliance_devicetab' pk=object.pk %}" class="btn btn-{% if not request.GET.compliance %}primary{% else %}default{% endif %}">All</a>
+                 <a href="{% url 'plugins:netbox_golden_config:configcompliance_devicetab' pk=object.pk %}?compliance=compliant" class="btn btn-{% if request.GET.compliance == 'compliant' %}success{% else %}default{% endif %}">Compliant</a>
+                 <a href="{% url 'plugins:netbox_golden_config:configcompliance_devicetab' pk=object.pk %}?compliance=non-compliant" class="btn btn-{% if request.GET.compliance == 'non-compliant' %}danger{% else %}default{% endif %}">Non-Compliant</a>
+             </div>
+             {# Optional: Add feature quick links if many features exist #}
+        </div>
+
+        {% if not compliance_details %}
+            <div class="alert alert-info text-center" role="alert">
+                No configuration compliance records found for this device {% if request.GET.compliance %}matching the current filter{% endif %}.
+            </div>
+        {% else %}
+            {% for item in compliance_details %}
+                <div class="panel panel-default">
+                    <div class="panel-heading" id="{{ item.rule }}"> {# Use rule pk or slug for ID #}
+                        <strong>
+                             {# Link to Compliance Rule Detail #}
+                             <a href="{{ item.rule.get_absolute_url }}">{{ item.rule.feature.name|upper }}</a>
+                             {# Link to Compliance Record Detail #}
+                             (<a href="{{ item.get_absolute_url }}">Details</a>)
+                         </strong>
+                         <div class="pull-right"> {# Right-align status badges #}
+                             {% if item.rule.config_ordered %}
+                                 <span class="label label-info" title="Ordered Configuration Test"><i class="mdi mdi-sort"></i> Ordered</span>
+                             {% else %}
+                                 <span class="label label-info" title="Unordered Configuration Test"><i class="mdi mdi-swap-vertical"></i> Unordered</span>
+                             {% endif %}
+                             {% if item.compliance %}
+                                 <span class="label label-success"><i class="mdi mdi-check-bold"></i> Compliant</span>
+                             {% else %}
+                                 <span class="label label-danger"><i class="mdi mdi-close-thick"></i> Non-Compliant</span>
+                             {% endif %}
+                         </div>
+                    </div>
+                    <div class="panel-body">
+                         <table class="table table-hover attr-table table-condensed"> {# Use NetBox table classes #}
+                             <tbody>
+                                 {% if item.ordered %}
+                                     {# Show combined Actual/Intended for ordered compliant #}
+                                     <tr>
+                                         <td style="width: 20%;">Configuration</td>
+                                         <td>
+                                             <div class="pull-right noprint">
+                                                 <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#config_{{ item.pk }}">
+                                                     <i class="mdi mdi-content-copy"></i>
+                                                 </button>
+                                             </div>
+                                             {# Apply syntax highlighting based on config_type #}
+                                             {% with lang=item.rule.config_type|lower %}
+                                             <pre id="config_{{ item.pk }}"><code class="language-{{ lang }}">{{ item.actual|placeholder|condition_render_json }}</code></pre>
+                                             {% endwith %}
+                                         </td>
+                                     </tr>
+                                 {% else %}
+                                     {# Show Intended and Actual separately for unordered or non-compliant #}
+                                     <tr>
+                                         <td style="width: 20%;">Intended Configuration</td>
+                                         <td>
+                                             <div class="pull-right noprint">
+                                                  <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#intended_{{ item.pk }}">
+                                                      <i class="mdi mdi-content-copy"></i>
+                                                  </button>
+                                              </div>
+                                             {% with lang=item.rule.config_type|lower %}
+                                             <pre id="intended_{{ item.pk }}"><code class="language-{{ lang }}">{{ item.intended|placeholder|condition_render_json }}</code></pre>
+                                             {% endwith %}
+                                         </td>
+                                     </tr>
+                                     <tr>
+                                         <td>Actual Configuration</td>
+                                         <td>
+                                              <div class="pull-right noprint">
+                                                  <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#actual_{{ item.pk }}">
+                                                      <i class="mdi mdi-content-copy"></i>
+                                                  </button>
+                                              </div>
+                                             {% with lang=item.rule.config_type|lower %}
+                                             <pre id="actual_{{ item.pk }}"><code class="language-{{ lang }}">{{ item.actual|placeholder|condition_render_json }}</code></pre>
+                                             {% endwith %}
+                                         </td>
+                                     </tr>
+                                 {% endif %}
+
+                                 {% if item.missing != "" %}
+                                     <tr>
+                                         <td class="text-danger">Missing Configuration</td>
+                                         <td>
+                                              <div class="pull-right noprint">
+                                                  <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#missing_{{ item.pk }}">
+                                                      <i class="mdi mdi-content-copy"></i>
+                                                  </button>
+                                              </div>
+                                             <pre id="missing_{{ item.pk }}">{{ item.missing|condition_render_json }}</pre>
+                                         </td>
+                                     </tr>
+                                 {% endif %}
+                                 {% if item.extra != "" %}
+                                     <tr>
+                                         <td class="text-danger">Extra Configuration</td>
+                                         <td>
+                                              <div class="pull-right noprint">
+                                                  <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#extra_{{ item.pk }}">
+                                                      <i class="mdi mdi-content-copy"></i>
+                                                  </button>
+                                              </div>
+                                             <pre id="extra_{{ item.pk }}">{{ item.extra|condition_render_json }}</pre>
+                                         </td>
+                                     </tr>
+                                 {% endif %}
+                                  {% if item.remediation != "" %}
+                                     <tr>
+                                         <td class="text-info">Remediation Configuration</td>
+                                         <td>
+                                              <div class="pull-right noprint">
+                                                  <button class="btn btn-xs btn-default copy-to-clipboard" data-clipboard-target="#remediation_{{ item.pk }}">
+                                                      <i class="mdi mdi-content-copy"></i>
+                                                  </button>
+                                              </div>
+                                             <pre id="remediation_{{ item.pk }}">{{ item.remediation|condition_render_json }}</pre>
+                                         </td>
+                                     </tr>
+                                 {% endif %}
+                             </tbody>
+                         </table>
+                    </div> {# End panel-body #}
+                </div> {# End panel #}
+            {% endfor %}
+        {% endif %} {# End if compliance_details #}
+    </div> {# End col #}
+</div> {# End row #}
+{% endblock %}
+
+{% block javascript %}
+{{ block.super }}
+{# Initialize ClipboardJS if not done globally #}
+<script>
+    var clipboard = new ClipboardJS('.copy-to-clipboard');
+    clipboard.on('success', function(e) {
+        console.log('Copied!');
+        e.clearSelection();
+        // Optional: Add visual feedback
+         const icon = e.trigger.querySelector("i");
+         const original_icon = icon.className;
+         icon.className = "mdi mdi-check";
+         setTimeout(() => {icon.className = original_icon;}, 1000);
+    });
+    clipboard.on('error', function(e) {
+        console.error('Copy failed:', e.action);
+    });
+</script>
+{% endblock %}
