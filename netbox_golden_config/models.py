@@ -11,17 +11,14 @@ from django.db import models
 from django.db.models.manager import BaseManager # Keep standard Django Manager
 # from django.db.models.query import QuerySet # Replaced with RestrictedQuerySet below
 from django.utils.module_loading import import_string
-from hier_config import Host as HierConfigHost
-from netbox.models.features import ChangeLoggingMixin, CustomFieldsMixin, JobsMixin, NotesMixin, RelationshipsMixin, TagsMixin, WebhooksMixin # NetBox base features
+from hier_config import WorkflowRemediation, get_hconfig, Platform
+from netbox.models.features import ChangeLoggingMixin, CustomFieldsMixin, JobsMixin,   TagsMixin # NetBox base features
 from netbox.models import NetBoxModel
 from utilities.querysets import RestrictedQuerySet # Use NetBox's RestrictedQuerySet
 
 # Use NetBox core models
 from dcim.models import Device, Platform
-from extras.models import Tag, ObjectChange, Status, GraphQLQuery, DynamicGroup # Note: NetBox DynamicGroup may differ or not exist natively
-from extras.utils import extras_features # Check NetBox equivalent if needed, or use mixins directly
-from extras.models import GitRepository
-from netbox.utilities.serialization import serialize_object # NetBox's serialize_object
+from extras.models import Tag # Note: NetBox DynamicGroup may differ or not exist natively
 
 # Netutils and xmldiff remain the same
 from netutils.config.compliance import feature_compliance
@@ -246,20 +243,25 @@ def _get_hierconfig_remediation(obj):
     remediation_options = remediation_setting_obj.remediation_options
 
     try:
-        hc_kwargs = {"hostname": obj.device.name, "os": hierconfig_os}
-        if remediation_options:
-            hc_kwargs.update(hconfig_options=remediation_options)
-        host = HierConfigHost(**hc_kwargs)
+        # Определяем платформу на основе hierconfig_os
+        platform = getattr(Platform, hierconfig_os.upper(), None)
+        if platform is None:
+            raise ValueError(f"Unsupported platform: {hierconfig_os}")
+        
+        # Создаем HConfig объекты для конфигураций
+        running_config = get_hconfig(platform, obj.actual, options=remediation_options)
+        intended_config = get_hconfig(platform, obj.intended, options=remediation_options)
+        
+        # Создаем объект WorkflowRemediation
+        workflow = WorkflowRemediation(running_config, intended_config)
+        
+        # Получаем конфигурацию исправления
+        remediation_config = workflow.remediation_config_filtered_text(include_tags={}, exclude_tags={})
 
-    except Exception as err:  # pylint: disable=broad-except:
-        raise Exception(  # pylint: disable=broad-exception-raised
-            f"Cannot instantiate HierConfig on {obj.device.name}, check Device, Platform and Hier Options."
+    except Exception as err:
+        raise Exception(
+            f"Cannot generate remediation config for {obj.device.name}, check Device, Platform and Hier Options."
         ) from err
-
-    host.load_generated_config(obj.intended)
-    host.load_running_config(obj.actual)
-    host.remediation_config()
-    remediation_config = host.remediation_config_filtered_text(include_tags={}, exclude_tags={})
 
     return remediation_config
 
@@ -286,7 +288,7 @@ for custom_function, custom_type in CUSTOM_FUNCTIONS.items():
 
 # Use NetBoxModel which includes base functionality like PK, created, last_updated
 # Use NetBox feature mixins instead of extras_features decorator
-class ComplianceFeature(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ComplianceFeature(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """ComplianceFeature details."""
 
     name = models.CharField(max_length=100, unique=True)
@@ -310,7 +312,7 @@ class ComplianceFeature(NetBoxModel, TagsMixin, CustomFieldsMixin, Relationships
     #     return reverse("plugins:netbox_golden_config:compliancefeature", kwargs={"pk": self.pk})
 
 
-class ComplianceRule(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ComplianceRule(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """ComplianceRule details."""
 
     feature = models.ForeignKey(to="ComplianceFeature", on_delete=models.CASCADE, related_name="feature")
@@ -378,7 +380,7 @@ class ComplianceRule(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMix
     #     from django.urls import reverse
     #     return reverse("plugins:netbox_golden_config:compliancerule", kwargs={"pk": self.pk})
 
-class ConfigCompliance(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ConfigCompliance(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """Configuration compliance details."""
 
     device = models.ForeignKey(to="dcim.Device", on_delete=models.CASCADE, help_text="The device")
@@ -480,7 +482,7 @@ class ConfigCompliance(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsM
     #     from django.urls import reverse
     #     return reverse("plugins:netbox_golden_config:configcompliance", kwargs={"pk": self.pk})
 
-class GoldenConfig(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class GoldenConfig(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """Configuration Management Model."""
 
     device = models.OneToOneField( # Keep OneToOneField
@@ -598,7 +600,7 @@ class GoldenConfigSettingManager(BaseManager.from_queryset(RestrictedQuerySet)):
     # --- End Dynamic Group Replacement Logic ---
 
 # Replace extras_features with NetBoxModel and Mixins
-class GoldenConfigSetting(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class GoldenConfigSetting(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """GoldenConfigSetting Model definition. This provides global configs instead of via configs.py."""
 
     name = models.CharField(max_length=100, unique=True)
@@ -754,7 +756,7 @@ class GoldenConfigSetting(NetBoxModel, TagsMixin, CustomFieldsMixin, Relationshi
                  return None
         return None
 
-class ConfigRemove(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ConfigRemove(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """ConfigRemove for Regex Line Removals from Backup Configuration Model definition."""
     name = models.CharField(max_length=255)
     platform = models.ForeignKey(
@@ -785,7 +787,7 @@ class ConfigRemove(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin
     #     from django.urls import reverse
     #     return reverse("plugins:netbox_golden_config:configremove", kwargs={"pk": self.pk})
 
-class ConfigReplace(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ConfigReplace(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """ConfigReplace for Regex Line Replacements from Backup Configuration Model definition."""
     name = models.CharField(max_length=255)
     platform = models.ForeignKey(
@@ -822,7 +824,7 @@ class ConfigReplace(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixi
     #     return reverse("plugins:netbox_golden_config:configreplace", kwargs={"pk": self.pk})
 
 
-class RemediationSetting(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class RemediationSetting(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """RemediationSetting details."""
     platform = models.OneToOneField(
         to="dcim.Platform",
@@ -865,7 +867,7 @@ class RemediationSetting(NetBoxModel, TagsMixin, CustomFieldsMixin, Relationship
     #     return reverse("plugins:netbox_golden_config:remediationsetting", kwargs={"pk": self.pk})
 
 # Use NetBox features mixins including StatusesMixin if needed (or handle Status FK directly)
-class ConfigPlan(NetBoxModel, TagsMixin, CustomFieldsMixin, RelationshipsMixin, WebhooksMixin, NotesMixin):
+class ConfigPlan(NetBoxModel, TagsMixin, CustomFieldsMixin,  WebhooksMixin, NotesMixin):
     """ConfigPlan for Golden Configuration Plan Model definition."""
     plan_type = models.CharField(max_length=20, choices=ConfigPlanTypeChoice.CHOICES, verbose_name="Plan Type")
     device = models.ForeignKey(

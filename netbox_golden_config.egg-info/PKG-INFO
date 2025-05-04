@@ -1,0 +1,5 @@
+Metadata-Version: 2.1
+Name: netbox-golden-config
+Version: 0.1
+Summary: App that provides a NetDevOps approach to golden configuration and configuration compliance
+Author: Alexey Tokarev
